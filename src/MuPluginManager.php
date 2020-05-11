@@ -291,7 +291,7 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 
 			// Check if the DB needs to be updated.
 			if ( $this->is_muplugin_update_required() ) {
-				$settings = $this->get_settings();
+				$settings = (array)$this->get_settings();
 				// Update version number in the database
 				$settings['mu_plugin_version'] = $this->mu_plugin_version;
 
@@ -349,7 +349,9 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 
 			// If successfully removed, let's do some DB cleanup.
 			if ( true === self::$activation_result ) {
-				unset( $instance->settings['mu_plugin_version'] );
+				if ( isset( $instance->settings['mu_plugin_version'] ) ) {
+					unset( $instance->settings['mu_plugin_version'] );
+				}
 				update_site_option( $instance->settings_name, $instance->settings );
 
 				return true;
