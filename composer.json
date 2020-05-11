@@ -1,0 +1,30 @@
+{
+  "name": "wpsmith/mupluginmanager",
+  "description": "Manages the auto-installation of a mu-plugin for a plugin.",
+  "keywords": [
+    "wordpress",
+    "mu-plugins",
+    "plugins"
+  ],
+  "homepage": "https://github.com/wpsmith/MuPluginManager",
+  "license": "GPL-2.0+",
+  "authors": [
+    {
+      "name": "Travis Smith",
+      "email": "t@wpsmith.net",
+      "homepage": "https://wpsmith.net/",
+      "role": "Developer"
+    }
+  ],
+  "support": {
+    "issues": "https://github.com/wpsmith/MuPluginManager/issues"
+  },
+  "require": {
+    "php": ">=7.0.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "WPS\\WP\\MuPlugins\\": "src/"
+    }
+  }
+}
