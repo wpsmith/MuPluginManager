@@ -183,6 +183,18 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 		}
 
 		/**
+		 * Determines whether the current admin page is the plugins page.
+		 *
+		 * @return bool
+		 */
+		public static function is_plugins_page() {
+			global $pagenow;
+			$screen = get_current_screen();
+
+			return is_admin() && ( 'plugins.php' === $pagenow || 'plugins.php' === $screen->base );
+		}
+
+		/**
 		 * Checks to see if the latest version of the MU plugin has been installed.
 		 *
 		 * If the MU plugin is not present, copy the plugin, enabling it by default.
@@ -191,11 +203,8 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 		 *
 		 */
 		public function muplugin_version_check() {
-			global $pagenow;
-			$screen = get_current_screen();
-
 			if (
-				( 'plugins.php' === $pagenow || 'plugins.php' === $screen->base ) &&
+				self::is_plugins_page() &&
 				true === $this->is_muplugin_update_required()
 			) {
 				$result = $this->copy_muplugin();
@@ -295,7 +304,7 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 				// Update version number in the database
 				$settings['mu_plugin_version'] = $this->mu_plugin_version;
 
-				update_site_option( $this->settings_name, $settings );
+				update_option( $this->settings_name, $settings );
 			}
 
 			return true;
