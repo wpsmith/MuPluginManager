@@ -90,7 +90,7 @@ add_action( 'plugin_loaded', array( get_muplugin_manager(), 'add_hooks' ) );
 ````
 ## Change Log
 
-Initial.
+See the [change log](CHANGELOG.md).
 
 ## License
 
