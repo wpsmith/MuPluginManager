@@ -15,6 +15,10 @@
 
 namespace WPS\WP\MuPlugins;
 
+use Exception;
+use WP_Error;
+use WP_Filesystem_Base;
+
 // Exit if accessed directly
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -45,7 +49,7 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 		/**
 		 * Filesystem shim.
 		 *
-		 * @var \WP_Filesystem_Base
+		 * @var WP_Filesystem_Base
 		 */
 		public $filesystem;
 
@@ -89,7 +93,7 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 		/**
 		 * Activation or Deactivation result.
 		 *
-		 * @var bool|null|\WP_Error
+		 * @var bool|null|WP_Error
 		 */
 		public static $activation_result;
 
@@ -98,42 +102,125 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 		 *
 		 * @param string $settings_name Name of the settings.
 		 * @param string $src Source file to be moved to mu-plugins folder.
-		 * @param string $destFilename Destination within mu-plugins to move file.
+		 * @param string $dest_filename Destination within mu-plugins to move file.
 		 * @param string $version Version of the compatibility plugin, to force an update of the MU plugin, increment this value
 		 * @param bool   $throw_errs Whether to throw error if activation/deactivation issues occur.
 		 */
-		public function __construct( $src, $destFilename, $version, $settings_name, $throw_errs = false ) {
+		public function __construct( $src, $dest_filename, $version, $settings_name = null, $throw_errs = false ) {
 
 			$this->mu_plugin_version = $version;
 			$this->mu_plugin_dir     = self::get_mu_plugin_dir();
 			$this->mu_plugin_source  = $src;
-			$this->mu_plugin_dest    = trailingslashit( $this->mu_plugin_dir ) . $destFilename;
+			$this->mu_plugin_dest    = trailingslashit( $this->mu_plugin_dir ) . $dest_filename;
 			$this->settings_name     = $settings_name;
-			$this->settings          = get_option( $settings_name );
 			$this->throw_errs        = (bool) $throw_errs;
+			if ( null !== $settings_name ) {
+				$this->settings = get_option( $settings_name );
+			}
 
-			// Version check
+		}
+
+		/**
+		 * Hook into WordPress.
+		 */
+		public function add_hooks() {
+
+			// Version check.
 			add_action( 'admin_init', array( $this, 'init_wp_filesystem' ), 0 );
 			add_action( 'admin_init', array( $this, 'muplugin_version_check' ), 1 );
 
-			// Admin notice
+			// Admin notice.
 			add_action( 'admin_notices', array( $this, 'admin_notice' ), 1 );
 
 		}
 
 		/**
-		 * Gets mu-plugins directory.
+		 * Gets the admin DB settings.
 		 *
-		 * @return string
+		 * @return mixed
 		 */
-		public static function get_mu_plugin_dir() {
-			return ( defined( 'WPMU_PLUGIN_DIR' ) && defined( 'WPMU_PLUGIN_URL' ) ) ? WPMU_PLUGIN_DIR : trailingslashit( WP_CONTENT_DIR ) . 'mu-plugins';
+		protected function get_settings() {
+			if ( null == $this->settings ) {
+				$this->settings = get_option( $this->settings_name );
+			}
+
+			return $this->settings;
 		}
+
+		/**
+		 * Checks if the compatibility mu-plugin requires an update based on the 'mu_plugin_version' setting in the database
+		 *
+		 * @return bool
+		 */
+		protected function is_muplugin_update_required() {
+			// Return true if the mu-plugin is not installed.
+			if ( ! $this->is_muplugin_installed() ) {
+				return true;
+			}
+
+			// Check via Filesystem.
+			$muplugin_data = get_plugin_data( $this->mu_plugin_source, false, false );
+			if ( version_compare( $this->mu_plugin_version, $muplugin_data['Version'], '>' ) ) {
+				return true;
+			}
+
+			// Check via DB.
+			$settings = $this->get_settings();
+			if (
+				! isset( $settings['mu_plugin_version'] ) ||
+				( isset( $settings['mu_plugin_version'] ) && version_compare( $this->mu_plugin_version, $settings['mu_plugin_version'], '>' ) )
+
+			) {
+				return true;
+			}
+
+			return false;
+		}
+
+		/**
+		 * Outputs the admin notice.
+		 *
+		 * @param string $notice Admin notice.
+		 */
+		protected function add_admin_warning_notice( $notice = '' ) {
+			?>
+            <div class="notice notice-error is-dismissible">
+                <p><?php
+					if ( '' !== $notice ) {
+						echo $notice;
+					} else {
+						printf( __( 'Your mu-plugin directory is currently not writable. Please update the permissions of the mu-plugins folder: %s', 'wps-codeable' ), $this->mu_plugin_dir );
+					}
+					?></p>
+            </div>
+			<?php
+		}
+
+		/**
+		 * Returns the error that the mu-plugins directory could not be created.
+		 *
+		 * @return WP_Error
+		 */
+		protected function get_mu_plugins_not_created() {
+			return new WP_Error( 'mu-plugins-not-created', sprintf( esc_html__( 'The mu-plugins directory could not be created: %s', 'wps-codeable' ), $this->mu_plugin_dir ) );
+		}
+
+		/**
+		 * Returns the error that the mu-plugins directory is not writeable.
+		 *
+		 * @return WP_Error
+		 */
+		protected function get_plugins_not_writeable() {
+			return new WP_Error( 'mu-plugins-not-writeable', sprintf( __( 'Your mu-plugin directory is currently not writable. Please update the permissions of the mu-plugins folder: %s', 'wps-codeable' ), $this->mu_plugin_dir ) );
+		}
+
+		/* PRIVATE WP HOOKS */
 
 		/**
 		 * Initializes WP Filesystem.
 		 *
-		 * @return \WP_Error|bool
+		 * @access private
+		 * @return WP_Error|bool
 		 */
 		public function init_wp_filesystem() {
 			// Make sure we have access to WP_Filesystem.
@@ -149,7 +236,7 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 				/* initialize the API */
 				if ( ! WP_Filesystem( $creds ) ) {
 					/* any problems and we exit */
-					return new \WP_Error( 'filesystem-error', __( 'Something happened with initializing WP Filesystem.', 'wps-codeable' ) );
+					return new WP_Error( 'filesystem-error', __( 'Something happened with initializing WP Filesystem.', 'wps-codeable' ) );
 				}
 
 				global $wp_filesystem;
@@ -183,15 +270,14 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 		}
 
 		/**
-		 * Determines whether the current admin page is the plugins page.
+		 * Adds an admin notice if the mu-plugins directory is not writable.
 		 *
-		 * @return bool
+		 * @access private
 		 */
-		public static function is_plugins_page() {
-			global $pagenow;
-			$screen = get_current_screen();
-
-			return is_admin() && ( 'plugins.php' === $pagenow || 'plugins.php' === $screen->base );
+		public function admin_notice() {
+			if ( $this->is_muplugin_update_required() && false === $this->is_muplugin_writable() ) {
+				$this->add_admin_warning_notice();
+			}
 		}
 
 		/**
@@ -201,6 +287,7 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 		 * Checks the plugin's setting and 'mu_plugin_version' option to see if the MU plugin needs updating.
 		 * If the MU plugin cannot be installed, a warning notice is added within the WP admin.
 		 *
+		 * @access private
 		 */
 		public function muplugin_version_check() {
 			if (
@@ -214,65 +301,7 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 			}
 		}
 
-		/**
-		 * Gets the admin DB settings.
-		 *
-		 * @return mixed
-		 */
-		protected function get_settings() {
-			if ( null == $this->settings ) {
-				$this->settings = get_option( $this->settings_name );
-			}
-
-			return $this->settings;
-		}
-
-		/**
-		 * Checks if the compatibility mu-plugin requires an update based on the 'mu_plugin_version' setting in the database
-		 *
-		 * @return bool
-		 */
-		public function is_muplugin_update_required() {
-			$settings = $this->get_settings();
-
-			if (
-				! isset( $settings['mu_plugin_version'] ) ||
-				( isset( $settings['mu_plugin_version'] ) && version_compare( $this->mu_plugin_version, $settings['mu_plugin_version'], '>' ) && $this->is_muplugin_installed() )
-
-			) {
-				return true;
-			}
-
-			return false;
-		}
-
-		/**
-		 * Adds an admin notice if the mu-plugins directory is not writable.
-		 */
-		public function admin_notice() {
-			if ( $this->is_muplugin_update_required() && false === $this->is_muplugin_writable() ) {
-				$this->add_admin_warning_notice();
-			}
-		}
-
-		/**
-		 * Outputs the admin notice.
-		 *
-		 * @param string $notice Admin notice.
-		 */
-		public function add_admin_warning_notice( $notice = '' ) {
-			?>
-            <div class="notice notice-error is-dismissible">
-                <p><?php
-					if ( '' !== $notice ) {
-						echo $notice;
-					} else {
-						printf( __( 'Your mu-plugin directory is currently not writable. Please update the permissions of the mu-plugins folder: %s', 'wps-codeable' ), $this->mu_plugin_dir );
-					}
-					?></p>
-            </div>
-			<?php
-		}
+		/* PUBLIC API */
 
 		/**
 		 * Attempts to copy the MU plugin to the mu-plugins directory.
@@ -281,7 +310,7 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 		 * It attempts to copy the MU plugin to the mu-plugins directory.
 		 * It updates the DB setting with the latest version number.
 		 *
-		 * @return bool|\WP_Error
+		 * @return bool|WP_Error
 		 */
 		public function copy_muplugin() {
 			if ( null === $this->filesystem ) {
@@ -300,7 +329,7 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 
 			// Check if the DB needs to be updated.
 			if ( $this->is_muplugin_update_required() ) {
-				$settings = (array)$this->get_settings();
+				$settings = (array) $this->get_settings();
 				// Update version number in the database
 				$settings['mu_plugin_version'] = $this->mu_plugin_version;
 
@@ -313,7 +342,7 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 		/**
 		 * Attempts to remove the MU plugin from the mu-plugins folder.
 		 *
-		 * @return bool|\WP_Error
+		 * @return bool|WP_Error
 		 */
 		public function remove_muplugin() {
 			if ( null === $this->filesystem ) {
@@ -328,75 +357,6 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 		}
 
 		/**
-		 * Returns the error that the mu-plugins directory could not be created.
-		 *
-		 * @return \WP_Error
-		 */
-		public function get_mu_plugins_not_created() {
-			return new \WP_Error( 'mu-plugins-not-created', sprintf( esc_html__( 'The mu-plugins directory could not be created: %s', 'wps-codeable' ), $this->mu_plugin_dir ) );
-		}
-
-		/**
-		 * Returns the error that the mu-plugins directory is not writeable.
-		 *
-		 * @return \WP_Error
-		 */
-		public function get_plugins_not_writeable() {
-			return new \WP_Error( 'mu-plugins-not-writeable', sprintf( __( 'Your mu-plugin directory is currently not writable. Please update the permissions of the mu-plugins folder: %s', 'wps-codeable' ), $this->mu_plugin_dir ) );
-		}
-
-		/**
-		 * Removes MU plugin and removes the option from the DB setting.
-		 *
-		 * @param MuPluginManager $instance
-		 *
-		 * @return bool|\WP_Error|null
-		 * @throws \Exception
-		 */
-		public static function on_deactivation( MuPluginManager $instance ) {
-			self::$activation_result = $instance->remove_muplugin();
-
-			// If successfully removed, let's do some DB cleanup.
-			if ( true === self::$activation_result ) {
-				if ( isset( $instance->settings['mu_plugin_version'] ) ) {
-					unset( $instance->settings['mu_plugin_version'] );
-				}
-				update_site_option( $instance->settings_name, $instance->settings );
-
-				return true;
-			}
-
-			// If removal failed...
-			if ( is_wp_error( self::$activation_result ) ) {
-				// Let's log it for the user.
-				self::write_log( self::$activation_result->get_error_message() );
-
-				// And maybe throw an exception.
-				if ( $instance->throw_errs ) {
-					$message = __( 'Plugin was not deactivated. ', 'wps-codeable' ) . self::$activation_result->get_error_message();
-					throw new \Exception( $message );
-				}
-			}
-
-			return self::$activation_result;
-		}
-
-		/**
-		 * Handles the adding of the MU plugin on the activation hook.
-		 *
-		 * @param MuPluginManager $instance
-		 */
-		public static function on_activation( MuPluginManager $instance ) {
-			self::$activation_result = $instance->copy_muplugin();
-
-			// If copying the mu plugin failed, let's log it for the user.
-			// On next page load, our admin notice should display.
-			if ( is_wp_error( self::$activation_result ) ) {
-				self::write_log( self::$activation_result->get_error_message() );
-			}
-		}
-
-		/**
 		 * Checks if the compatibility mu-plugin is installed
 		 *
 		 * @return bool $installed
@@ -404,15 +364,14 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 		public function is_muplugin_installed() {
 			$plugins           = wp_get_mu_plugins();
 			$muplugin_filename = basename( $this->mu_plugin_dest );
-			$installed         = false;
 
 			foreach ( $plugins as $plugin ) {
 				if ( false !== strpos( $plugin, $muplugin_filename ) ) {
-					$installed = true;
+					return true;
 				}
 			}
 
-			return $installed;
+			return false;
 		}
 
 		/**
@@ -455,6 +414,90 @@ if ( ! class_exists( __NAMESPACE__ . '\MuPluginManager' ) ) {
 					error_log( $log );
 				}
 			}
+		}
+
+		/**
+		 * Gets mu-plugins directory.
+		 *
+		 * @return string
+		 */
+		public static function get_mu_plugin_dir() {
+			$wpmu_plugin_path = ( defined( 'WPMU_PLUGIN_DIR' ) && defined( 'WPMU_PLUGIN_URL' ) ) ? WPMU_PLUGIN_DIR : trailingslashit( WP_CONTENT_DIR ) . 'mu-plugins';
+
+			return trailingslashit( wp_normalize_path( $wpmu_plugin_path ) );
+		}
+
+		/**
+		 * Determines whether the current admin page is the plugins page.
+		 *
+		 * @return bool
+		 */
+		public static function is_plugins_page() {
+			global $pagenow;
+			$screen = get_current_screen();
+
+			return is_admin() && ( 'plugins.php' === $pagenow || ( null !== $screen && 'plugins.php' === $screen->base ) );
+		}
+
+		/**
+		 * Removes MU plugin and removes the option from the DB setting.
+		 *
+		 * @param MuPluginManager $instance The MU plugin manager.
+		 *
+		 * @return bool|WP_Error The deactivation result.
+		 * @throws Exception
+		 */
+		public static function on_deactivation( MuPluginManager $instance ) {
+			self::$activation_result  = $instance->remove_muplugin();
+
+			// If successfully removed, let's do some DB cleanup.
+			if ( true === self::$activation_result && null !== $instance->settings ) {
+				if ( isset( $instance->settings['mu_plugin_version'] ) ) {
+					unset( $instance->settings['mu_plugin_version'] );
+				}
+				update_site_option( $instance->settings_name, $instance->settings );
+
+				return true;
+			}
+
+			return self::on_tivation( $instance, self::$activation_result  );
+		}
+
+		/**
+		 * @param MuPluginManager $instance The MU plugin manager.
+		 *
+		 * @return bool|WP_Error The activation result.
+		 * @throws Exception
+		 */
+		public static function on_activation( MuPluginManager $instance ) {
+			self::$activation_result = $instance->copy_muplugin();
+
+			return self::on_tivation( $instance, self::$activation_result  );
+		}
+
+		/**
+		 * Helper for on_activation & on_deactivation.
+		 *
+		 * @param MuPluginManager $instance The MU plugin manager.
+		 * @param bool|WP_Error   $activation_result The (de)activation result.
+		 *
+		 * @return bool|WP_Error The (de)activation Result.
+		 * @throws Exception
+		 */
+		public static function on_tivation( MuPluginManager $instance, $activation_result ) {
+			// If copying the mu plugin failed, let's log it for the user.
+			// On next page load, our admin notice should display.
+			if ( is_wp_error( $activation_result ) ) {
+				self::write_log( $activation_result->get_error_message() );
+
+				// And maybe throw an exception.
+				if ( $instance->throw_errs ) {
+					$message = __( 'Plugin was not deactivated. ', 'wps' ) . $activation_result->get_error_message();
+					throw new Exception( $message );
+				}
+			}
+
+			return $activation_result;
 		}
 	}
 }
